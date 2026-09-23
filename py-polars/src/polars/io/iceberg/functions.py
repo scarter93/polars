@@ -63,6 +63,10 @@ def scan_iceberg(
         Extra options for the storage backends supported by `pyiceberg`.
         For cloud storages, this may include configurations for authentication etc.
 
+        If not provided, storage credentials are derived from the table's FileIO
+        properties, which carry the short-lived credentials vended by REST
+        catalogs that support access delegation.
+
         More info is available `here <https://py.iceberg.apache.org/configuration/>`__.
     catalog
         PyIceberg catalog to load the table from if the provided `target`

@@ -559,7 +559,9 @@ class IcebergScanResolver:
                     self.table.iceberg_storage_properties
                 )
                 if self.table.iceberg_storage_properties is not None
-                else None
+                else _vended_object_store_storage_options(
+                    self.table.get().io.properties
+                )
             )
 
             return _NativeIcebergScanData(
@@ -717,6 +719,26 @@ def _convert_iceberg_to_object_store_storage_options(
         # unknown keys.
 
     return storage_options
+
+
+def _vended_object_store_storage_options(
+    fileio_properties: dict[str, Any],
+) -> dict[str, str] | None:
+    """
+    Derive object-store storage options from a table's FileIO properties.
+
+    REST catalogs with access delegation vend short-lived credentials into the
+    FileIO properties at `loadTable`. Only keys with an object-store translation
+    are taken; returns None when nothing translates.
+    """
+    storage_options = {
+        translated_key: v
+        for k, v in fileio_properties.items()
+        if (translated_key := ICEBERG_TO_OBJECT_STORE_CONFIG_KEY_MAP.get(k)) is not None
+        and isinstance(v, str)
+    }
+
+    return storage_options or None
 
 
 # https://py.iceberg.apache.org/configuration/#fileio

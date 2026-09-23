@@ -4675,6 +4675,81 @@ def test_convert_iceberg_storage_options_dot_filtering() -> None:
     assert "other.foo" not in result
 
 
+def test_vended_object_store_storage_options() -> None:
+    from polars.io.iceberg._dataset import _vended_object_store_storage_options
+
+    result = _vended_object_store_storage_options(
+        {
+            # translated
+            "s3.access-key-id": "ACCESS_KEY",
+            "s3.secret-access-key": "SECRET_KEY",
+            "s3.session-token": "SESSION_TOKEN",
+            "s3.region": "us-east-1",
+            # catalog configuration, not for the reader
+            "type": "rest",
+            "uri": "https://catalog.example.com/iceberg/main",
+            "warehouse": "warehouse",
+            "token": "BEARER",
+            # non-string values are dropped
+            "s3.signer": {"impl": "custom"},
+            # unmapped keys are dropped
+            "s3.session-token-expires-at-ms": "1757400000000",
+        }
+    )
+
+    assert result == {
+        "aws_access_key_id": "ACCESS_KEY",
+        "aws_secret_access_key": "SECRET_KEY",
+        "aws_session_token": "SESSION_TOKEN",
+        "aws_region": "us-east-1",
+    }
+
+    assert _vended_object_store_storage_options({"uri": "x"}) is None
+    assert _vended_object_store_storage_options({}) is None
+
+
+@pytest.mark.write_disk
+def test_scan_iceberg_derives_storage_options_from_table_fileio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import polars.io.iceberg._dataset as _dataset_module
+
+    table, _ = new_iceberg_table(
+        tmp_path, schema=IcebergSchema(NestedField(1, "a", IntegerType()))
+    )
+    pl.LazyFrame({"a": 1}, schema={"a": pl.Int32}).sink_iceberg(table, mode="append")
+
+    static_table = pyiceberg.table.StaticTable.from_metadata(
+        metadata_location=table.metadata_location,
+        properties={
+            "s3.access-key-id": "ACCESS_KEY",
+            "s3.secret-access-key": "SECRET_KEY",
+            "s3.session-token": "SESSION_TOKEN",
+        },
+    )
+
+    derived: list[dict[str, str] | None] = []
+    vended = _dataset_module._vended_object_store_storage_options
+
+    def record(fileio_properties: dict[str, Any]) -> dict[str, str] | None:
+        out = vended(fileio_properties)
+        derived.append(out)
+        return out
+
+    monkeypatch.setattr(_dataset_module, "_vended_object_store_storage_options", record)
+
+    assert_frame_equal(
+        pl.scan_iceberg(static_table).collect(),
+        pl.DataFrame({"a": 1}, schema={"a": pl.Int32}),
+    )
+
+    assert derived[-1] == {
+        "aws_access_key_id": "ACCESS_KEY",
+        "aws_secret_access_key": "SECRET_KEY",
+        "aws_session_token": "SESSION_TOKEN",
+    }
+
+
 @pytest.mark.write_disk
 def test_scan_iceberg_v3_field_initial_default(tmp_path: Path) -> None:
     table, catalog = new_iceberg_table(
